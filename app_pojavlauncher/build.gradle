@@ -158,6 +158,16 @@ android {
         }
     }
 
+    // MamadCraft: one small APK per phone type (32-bit and 64-bit ARM), no emulator (x86) builds
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'armeabi-v7a', 'arm64-v8a'
+            universalApk false
+        }
+    }
+
     ndkVersion = "27.3.13750724"
 
     externalNativeBuild {
