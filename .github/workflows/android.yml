@@ -3,8 +3,8 @@ name: Android CI
 on:
   pull_request:
     branches-ignore:
-      - 'l10n_v3_openjdk' 
-    types: [ opened, reopened ]
+      - 'l10n_v3_openjdk'
+    types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches-ignore:
       - 'l10n_v3_openjdk'
@@ -43,36 +43,6 @@ jobs:
           rm -f app_pojavlauncher/src/main/assets/components/jre/bin-x86.tar.xz app_pojavlauncher/src/main/assets/components/jre/bin-x86_64.tar.xz
           ls -la app_pojavlauncher/src/main/assets/components/jre
 
-      # - name: Get JRE17
-      #   uses: dawidd6/action-download-artifact@v9
-      #   with:
-      #     workflow: build.yml
-      #     path: app_pojavlauncher/src/main/assets/components/jre-new
-      #     workflow_conclusion: completed
-      #     repo: AngelAuraMC/angelauramc-openjdk-build
-      #     branch: buildjre17-21
-      #     name: jre17-pojav
-      #
-      # - name: Get JRE21
-      #   uses: dawidd6/action-download-artifact@v9
-      #   with:
-      #     workflow: build.yml
-      #     path: app_pojavlauncher/src/main/assets/components/jre-21
-      #     workflow_conclusion: completed
-      #     repo: AngelAuraMC/angelauramc-openjdk-build
-      #     branch: buildjre17-21
-      #     name: jre21-pojav
-      #
-      # - name: Get JRE25
-      #   uses: dawidd6/action-download-artifact@v9
-      #   with:
-      #     workflow: build.yml
-      #     path: app_pojavlauncher/src/main/assets/components/jre-25
-      #     workflow_conclusion: completed
-      #     repo: FCL-Team/Android-OpenJDK-Build
-      #     branch: Build_JRE_25
-      #     name: jre25-multiarch
-
       - uses: gradle/actions/setup-gradle@v4
         with:
           validate-wrappers: false
@@ -80,24 +50,59 @@ jobs:
 
       - name: Run scripts
         run: |
+          set -euo pipefail
           ./scripts/languagelist_updater.sh
-          mkdir out
+          mkdir -p out
 
       - name: Build Debug .apk (32-bit and 64-bit)
+        shell: bash
         run: |
+          set -euo pipefail
           gradle :app_pojavlauncher:assembleDebug
-          ls -la app_pojavlauncher/build/outputs/apk/debug/
-          for f in app_pojavlauncher/build/outputs/apk/debug/*.apk; do
-            case "$f" in
-              *armeabi-v7a*) cp "$f" out/MamadCraft-32bit-armeabi-v7a.apk ;;
-              *arm64-v8a*)   cp "$f" out/MamadCraft-64bit-arm64-v8a.apk ;;
+
+          apk_dir="app_pojavlauncher/build/outputs/apk/debug"
+          mapfile -t apks < <(find "$apk_dir" -maxdepth 1 -type f -name '*.apk' -print)
+          if (("${#apks[@]}" == 0)); then
+            echo "No debug APKs were generated in $apk_dir" >&2
+            exit 1
+          fi
+
+          found32=0
+          found64=0
+          for apk in "${apks[@]}"; do
+            case "$apk" in
+              *armeabi-v7a*)
+                if ((found32)); then
+                  echo "More than one 32-bit APK was generated" >&2
+                  exit 1
+                fi
+                cp "$apk" out/MamadCraft-32bit-armeabi-v7a.apk
+                found32=1
+                ;;
+              *arm64-v8a*)
+                if ((found64)); then
+                  echo "More than one 64-bit APK was generated" >&2
+                  exit 1
+                fi
+                cp "$apk" out/MamadCraft-64bit-arm64-v8a.apk
+                found64=1
+                ;;
             esac
           done
-          ls -la out/
+
+          if ((!found32 || !found64)); then
+            echo "Expected one APK for each supported ABI (armeabi-v7a and arm64-v8a)." >&2
+            printf 'Generated files:\n%s\n' "${apks[@]}" >&2
+            exit 1
+          fi
+
+          ls -lh out/
 
       - name: Gen md5sums
         run: |
-          cd out && md5sum *.apk > MamadCraft.md5
+          set -euo pipefail
+          cd out
+          md5sum MamadCraft-32bit-armeabi-v7a.apk MamadCraft-64bit-arm64-v8a.apk > MamadCraft.md5
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
@@ -109,6 +114,7 @@ jobs:
       - name: Build Release .apk
         if: env.GPLAY_KEYSTORE_PASSWORD != ''
         run: |
+          set -euo pipefail
           gradle :app_pojavlauncher:assembleRelease
           mkdir -p out-release
           cp app_pojavlauncher/build/outputs/apk/release/*.apk out-release/
